@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Mini IDS — Real-time intrusion detection dashboard monitoring ARP spoofing and malicious payloads">
+    <title>Mini IDS — Intrusion Detection Dashboard</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<!-- ─── Header ──────────────────────────────────────────────────── -->
+<header class="header">
+    <div class="header-brand">
+        <div class="logo">🛡</div>
+        <div>
+            <h1>Mini IDS</h1>
+            <div class="subtitle">Intrusion Detection System</div>
+        </div>
+    </div>
+    <div class="header-status">
+        <div class="status-badge">
+            <span class="status-dot"></span>
+            Monitoring
+        </div>
+        <div class="uptime" id="uptime">00:00:00</div>
+    </div>
+</header>
+
+<!-- ─── Main Content ────────────────────────────────────────────── -->
+<main class="container">
+
+    <!-- Stats Grid -->
+    <section class="stats-grid">
+        <div class="stat-card">
+            <div class="label">Total Packets</div>
+            <div class="value" id="stat-total">0</div>
+        </div>
+        <div class="stat-card">
+            <div class="label">ARP Packets</div>
+            <div class="value" id="stat-arp">0</div>
+        </div>
+        <div class="stat-card">
+            <div class="label">TCP / UDP</div>
+            <div class="value" id="stat-tcpudp">0</div>
+        </div>
+        <div class="stat-card">
+            <div class="label">Alerts</div>
+            <div class="value" id="stat-alerts">0</div>
+        </div>
+        <div class="stat-card">
+            <div class="label">Unique Attackers</div>
+            <div class="value" id="stat-attackers">0</div>
+        </div>
+    </section>
+
+    <!-- Filter Bar -->
+    <div class="filter-bar">
+        <span class="label">Filter</span>
+        <button class="filter-btn active" data-filter="all" id="filter-all">All</button>
+        <button class="filter-btn" data-filter="ARP Spoof" id="filter-arp-spoof">ARP Spoof</button>
+        <button class="filter-btn" data-filter="Gratuitous ARP" id="filter-gratuitous-arp">Gratuitous ARP</button>
+        <button class="filter-btn" data-filter="ARP Flood" id="filter-arp-flood">ARP Flood</button>
+        <button class="filter-btn" data-filter="SQL Injection" id="filter-sqli">SQL Injection</button>
+        <button class="filter-btn" data-filter="XSS" id="filter-xss">XSS</button>
+        <button class="filter-btn" data-filter="Command" id="filter-cmd">Command Injection</button>
+        <button class="filter-btn" data-filter="Traversal" id="filter-traversal">Dir Traversal</button>
+        <button class="filter-btn" data-filter="Shell" id="filter-shell">Reverse Shell</button>
+    </div>
+
+    <!-- Alert Feed -->
+    <div class="alert-section-title">
+        Live Alert Feed <span class="count" id="alert-count">0</span>
+    </div>
+
+    <div class="alert-feed" id="alert-feed">
+        <div class="empty-state" id="empty-state">
+            <div class="icon">🔍</div>
+            <p>No alerts yet.<br>The IDS is actively monitoring your network…</p>
+        </div>
+    </div>
+
+</main>
+
+<!-- ─── JavaScript ──────────────────────────────────────────────── -->
+<script>
+(function () {
+    'use strict';
+
+    const POLL_INTERVAL = 2000;
+    let currentFilter = 'all';
+    let knownAlertCount = 0;
+
+    // ── DOM refs ─────────────────────────────────────────────────
+    const feed        = document.getElementById('alert-feed');
+    const emptyState  = document.getElementById('empty-state');
+    const alertCount  = document.getElementById('alert-count');
+    const statTotal   = document.getElementById('stat-total');
+    const statArp     = document.getElementById('stat-arp');
+    const statTcpUdp  = document.getElementById('stat-tcpudp');
+    const statAlerts  = document.getElementById('stat-alerts');
+    const statAttack  = document.getElementById('stat-attackers');
+    const uptimeEl    = document.getElementById('uptime');
+
+    // ── Helpers ──────────────────────────────────────────────────
+    function formatNumber(n) {
+        if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
+        if (n >= 1_000)     return (n / 1_000).toFixed(1) + 'K';
+        return String(n);
+    }
+
+    function formatUptime(seconds) {
+        const h = String(Math.floor(seconds / 3600)).padStart(2, '0');
+        const m = String(Math.floor((seconds % 3600) / 60)).padStart(2, '0');
+        const s = String(seconds % 60).padStart(2, '0');
+        return `${h}:${m}:${s}`;
+    }
+
+    function severityClass(sev) {
+        return sev.toLowerCase();
+    }
+
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    function matchesFilter(alert) {
+        if (currentFilter === 'all') return true;
+        // Partial match so "SQL Injection" filter catches all SQL Injection variants
+        return alert.type.includes(currentFilter);
+    }
+
+    // ── Render an alert card ─────────────────────────────────────
+    function renderAlert(alert) {
+        const sev = severityClass(alert.severity);
+        return `
+            <div class="alert-card" data-type="${escapeHtml(alert.type)}">
+                <div class="alert-severity-bar ${sev}"></div>
+                <div class="alert-body">
+                    <div class="alert-header">
+                        <span class="alert-type ${sev}">${escapeHtml(alert.severity)}</span>
+                        <span class="alert-label">${escapeHtml(alert.type)}</span>
+                    </div>
+                    <div class="alert-desc">${escapeHtml(alert.description)}</div>
+                </div>
+                <div class="alert-meta">
+                    <div class="alert-source">${escapeHtml(alert.source)}</div>
+                    <div class="alert-time">${escapeHtml(alert.timestamp)}</div>
+                </div>
+            </div>`;
+    }
+
+    // ── Fetch & render ───────────────────────────────────────────
+    async function fetchStats() {
+        try {
+            const res  = await fetch('/api/stats');
+            const data = await res.json();
+            statTotal.textContent  = formatNumber(data.total_packets || 0);
+            statArp.textContent    = formatNumber(data.arp_packets || 0);
+            statTcpUdp.textContent = formatNumber((data.tcp_packets || 0) + (data.udp_packets || 0));
+            statAlerts.textContent = formatNumber(data.alerts_count || 0);
+            statAttack.textContent = formatNumber(data.unique_attackers || 0);
+            uptimeEl.textContent   = formatUptime(data.uptime_seconds || 0);
+        } catch (_) {}
+    }
+
+    async function fetchAlerts() {
+        try {
+            const res    = await fetch('/api/alerts');
+            const alerts = await res.json();
+
+            if (alerts.length === 0) {
+                emptyState.style.display = '';
+                return;
+            }
+            emptyState.style.display = 'none';
+
+            const filtered = alerts.filter(matchesFilter);
+            alertCount.textContent = filtered.length;
+
+            // Only re-render when count changes to avoid flicker
+            if (alerts.length !== knownAlertCount || currentFilter !== window._lastFilter) {
+                knownAlertCount = alerts.length;
+                window._lastFilter = currentFilter;
+                feed.innerHTML = filtered.map(renderAlert).join('') ||
+                    '<div class="empty-state"><div class="icon">🔍</div><p>No alerts match this filter.</p></div>';
+            }
+        } catch (_) {}
+    }
+
+    // ── Filter buttons ───────────────────────────────────────────
+    document.querySelectorAll('.filter-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            currentFilter = btn.dataset.filter;
+            knownAlertCount = -1; // force re-render
+            fetchAlerts();
+        });
+    });
+
+    // ── Poll loop ────────────────────────────────────────────────
+    function poll() {
+        fetchStats();
+        fetchAlerts();
+    }
+
+    poll();
+    setInterval(poll, POLL_INTERVAL);
+})();
+</script>
+
+</body>
+</html>
